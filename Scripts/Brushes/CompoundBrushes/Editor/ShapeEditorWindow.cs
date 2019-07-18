@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Sabresaurus.SabreCSG.ShapeEditor
 {
@@ -510,6 +511,11 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
                     OnSegmentInsert();
                     Event.current.Use();
                 }
+                if (Event.current.keyCode == KeyCode.E)
+                {
+                    OnSegmentExtrude();
+                    Event.current.Use();
+                }
                 if (Event.current.keyCode == KeyCode.Delete)
                 {
                     OnDelete();
@@ -619,14 +625,51 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
                     gridMaterial = new Material(shader);
                 }
 
+                bool isOpenGL = false;
+
+                if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLCore
+#if !UNITY_5_3_OR_NEWER
+                    || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGL2
+#endif
+#if UNITY_5_1 || UNITY_5_2 || UNITY_5_3_0 || UNITY_5_3_1 || UNITY_5_3_2 || UNITY_5_3_3 || UNITY_5_3_OR_NEWER
+                    || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES2
+                    || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3
+#endif
+                  )
+                {
+                    isOpenGL = true;
+                }
+
+                float pixelsPerPoint = 1;
+#if UNITY_5_4_OR_NEWER
+                pixelsPerPoint = EditorGUIUtility.pixelsPerPoint;
+#endif
+
                 // draw the grid using the special grid shader:
                 bool docked = isDocked;
                 gridMaterial.SetFloat("_OffsetX", GetViewportRect().x + (docked ? 2 : 0)); // why is this neccesary, what's moving?
-                gridMaterial.SetFloat("_OffsetY", GetViewportRect().y + (docked ? 0 : 3)); // why is this neccesary, what's moving?
+                if (isOpenGL)
+                {
+                    if (pixelsPerPoint > 1)
+                    {
+                        gridMaterial.SetFloat("_OffsetY", (docked ? 3 : 0)); // why is this neccesary, what's moving?
+                    }
+                    else
+                    {
+                        gridMaterial.SetFloat("_OffsetY", GetViewportRect().y + (docked ? 3 : 0)); // why is this neccesary, what's moving?
+                    }
+                }
+                else
+                {
+                    gridMaterial.SetFloat("_OffsetY", GetViewportRect().y + (docked ? 0 : 3)); // why is this neccesary, what's moving?
+                }
+
                 gridMaterial.SetFloat("_ScrollX", viewportScroll.x);
                 gridMaterial.SetFloat("_ScrollY", viewportScroll.y);
                 gridMaterial.SetFloat("_Zoom", gridScale);
+                gridMaterial.SetFloat("_Height", GetViewportRect().height);
                 gridMaterial.SetTexture("_Background", backgroundImage);
+                gridMaterial.SetFloat("_PixelsPerPoint", pixelsPerPoint);
                 gridMaterial.SetPass(0);
 
                 GL.Begin(GL.QUADS);
@@ -637,6 +680,8 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
                 GL.End();
                 ///////////////////////////////////////////////////////////////////////////////////
 
+                lineMaterial.SetFloat("_Height", GetViewportRect().height);
+                lineMaterial.SetFloat("_CutoffY", 35.0f);
                 lineMaterial.SetPass(0);
 
                 GL.PushMatrix();
@@ -787,6 +832,10 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
             {
                 OnSegmentInsert();
             }
+            if (GUILayout.Button(new GUIContent(SabreCSGResources.ShapeEditorSegmentExtrudeTexture, "Extrude Segment(s) (E)"), createBrushStyle))
+            {
+                OnSegmentExtrude();
+            }
             if (GUILayout.Button(new GUIContent(SabreCSGResources.ShapeEditorDeleteTexture, "Delete Segment(s) or Shape(s) (DEL)"), createBrushStyle))
             {
                 OnDelete();
@@ -837,6 +886,7 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
                 toolsMenu.AddItem(new GUIContent("Background/Clear Background"), false, OnToolsBackgroundClearBackground);
                 toolsMenu.AddItem(new GUIContent("Global Pivot/Set Position..."), false, OnToolsPivotSetPosition);
                 toolsMenu.AddItem(new GUIContent("Global Pivot/Reset Position"), false, OnToolsPivotResetPosition);
+                toolsMenu.AddItem(new GUIContent("Generate/Add Circle..."), false, OnToolsGenerateAddCircle);
 #if UNITY_5_4_OR_NEWER
                 toolsMenu.DropDown(new Rect((Screen.width - 50) / EditorGUIUtility.pixelsPerPoint, 0, 0, 16));
 #else
@@ -1078,7 +1128,7 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
         private void OnHome()
         {
             // scroll to the center of the screen.
-#if UNITY_2017_2_OR_NEWER
+#if UNITY_2017_2_OR_NEWER && !UNITY_2017_2_0
             viewportScroll = new Vector2(Screen.safeArea.width / 2.0f / EditorGUIUtility.pixelsPerPoint, Screen.safeArea.height / 2.0f / EditorGUIUtility.pixelsPerPoint);
 #else
             viewportScroll = new Vector2(Screen.width / 2.0f, Screen.height / 2.0f);
@@ -1137,6 +1187,31 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
 
                 // recalculate the pivot position of the shape.
                 parent.CalculatePivotPosition();
+            }
+        }
+
+        /// <summary>
+        /// Called when the extrude segment button is pressed. Will extrude all selected segments.
+        /// </summary>
+        private void OnSegmentExtrude()
+        {
+            foreach (Segment segment in selectedSegments.ToArray()) // use .ToArray() to iterate a clone.
+            {
+                bool inverted = project.flipHorizontally ^ project.flipVertically;
+                Segment next = GetNextSegment(segment);
+                // calculate extrude direction.
+                Vector2Int pos1 = (inverted ? segment.position - next.position : next.position - segment.position);
+                Vector2 dir = new Vector2(pos1.y, -pos1.x).normalized * 2.0f;
+                // insert new segments at an extruded distance.
+                Shape parent = GetShapeOfSegment(segment);
+                Segment select;
+                parent.segments.Insert(parent.segments.IndexOf(next), select = new Segment(segment.position.x + Mathf.RoundToInt(dir.x), segment.position.y + Mathf.RoundToInt(dir.y)));
+                parent.segments.Insert(parent.segments.IndexOf(next), new Segment(next.position.x + Mathf.RoundToInt(dir.x), next.position.y + Mathf.RoundToInt(dir.y)));
+                // recalculate the pivot position of the shape.
+                parent.CalculatePivotPosition();
+                // update the selection so we have the extruded segment selected, this improves the workflow experience.
+                selectedObjects.Remove(segment);
+                selectedObjects.Add(select);
             }
         }
 
@@ -1450,9 +1525,58 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
             project.globalPivot.position = Vector2Int.zero;
         }
 
+        /// <summary>
+        /// Called when the tools 'menu/generate/add circle' item is pressed.
+        /// </summary>
+        private void OnToolsGenerateAddCircle()
+        {
+            // let the user choose the circle settings.
+            ShowCenteredPopupWindowContent(new ShapeEditorWindowPopup(ShapeEditorWindowPopup.PopupMode.GenerateCircle, project, (self) =>
+            {
+                // create a new shape.
+                Shape shape = new Shape();
+
+                // first make a diamond shape.
+                List<Segment> segments = new List<Segment>() {
+                    new Segment(0, -self.GenerateCircle_Radius),
+                    new Segment(self.GenerateCircle_Radius, 0),
+                    new Segment( 0,  self.GenerateCircle_Radius),
+                    new Segment(-self.GenerateCircle_Radius, 0),
+                };
+
+                // now create the bezier segments.
+                segments[0].type = SegmentType.Bezier; // top right
+                segments[0].bezierPivot1.position = new Vector2Int(self.GenerateCircle_Radius / 2, -self.GenerateCircle_Radius);
+                segments[0].bezierPivot2.position = new Vector2Int(self.GenerateCircle_Radius, -self.GenerateCircle_Radius / 2);
+                segments[0].bezierDetail = self.bezierDetailLevel_Detail;
+
+                segments[1].type = SegmentType.Bezier; // bottom right
+                segments[1].bezierPivot1.position = new Vector2Int(self.GenerateCircle_Radius, self.GenerateCircle_Radius / 2);
+                segments[1].bezierPivot2.position = new Vector2Int(self.GenerateCircle_Radius / 2, self.GenerateCircle_Radius);
+                segments[1].bezierDetail = self.bezierDetailLevel_Detail;
+
+                segments[2].type = SegmentType.Bezier; // bottom left
+                segments[2].bezierPivot1.position = new Vector2Int(-self.GenerateCircle_Radius / 2, self.GenerateCircle_Radius);
+                segments[2].bezierPivot2.position = new Vector2Int(-self.GenerateCircle_Radius, self.GenerateCircle_Radius / 2);
+                segments[2].bezierDetail = self.bezierDetailLevel_Detail;
+
+                segments[3].type = SegmentType.Bezier; // top left
+                segments[3].bezierPivot1.position = new Vector2Int(-self.GenerateCircle_Radius, -self.GenerateCircle_Radius / 2);
+                segments[3].bezierPivot2.position = new Vector2Int(-self.GenerateCircle_Radius / 2, -self.GenerateCircle_Radius);
+                segments[3].bezierDetail = self.bezierDetailLevel_Detail;
+
+                // add the circle shape to the project.
+                shape.segments = segments;
+                project.shapes.Add(shape);
+
+                // show the changes.
+                Repaint();
+            }));
+        }
+
         private Rect GetViewportRect()
         {
-#if UNITY_2017_2_OR_NEWER
+#if UNITY_2017_2_OR_NEWER && !UNITY_2017_2_0
             Rect viewportRect = Screen.safeArea;
 #else
             Rect viewportRect = new Rect(0, 0, Screen.width, Screen.height);
@@ -1584,7 +1708,7 @@ namespace Sabresaurus.SabreCSG.ShapeEditor
             Vector2 size = popup.GetWindowSize();
             try
             {
-#if UNITY_2017_2_OR_NEWER
+#if UNITY_2017_2_OR_NEWER && !UNITY_2017_2_0
                 PopupWindow.Show(new Rect((Screen.safeArea.width / 2.0f / EditorGUIUtility.pixelsPerPoint) - (size.x / 2.0f), (Screen.safeArea.height / 2.0f / EditorGUIUtility.pixelsPerPoint) - (size.y / 2.0f), 0, 0), popup);
 #else
                 PopupWindow.Show(new Rect((Screen.width / 2.0f) - (size.x / 2.0f), (Screen.height / 2.0f) - (size.y / 2.0f), 0, 0), popup);

@@ -1016,7 +1016,7 @@ namespace Sabresaurus.SabreCSG
 
                 Vector3 worldCenterPoint = brushTransform.TransformPoint(currentPolygon.GetCenterPoint());
                 // Offset the gizmo so it's very slightly above the polygon, to avoid depth fighting
-                if (brush.Mode == CSGMode.Add)
+                if (brush.Mode == CSGMode.Add || brush.Mode == CSGMode.Volume)
                 {
                     worldCenterPoint += normal * 0.02f;
                 }
@@ -1072,7 +1072,7 @@ namespace Sabresaurus.SabreCSG
                             toDeselect.Add(polygon);
                         }
                     }
-                    else
+                    else if (brush.Mode == CSGMode.Subtract)
                     {
                         // is the camera on the positive side of the plane?
                         if (Vector3.Dot(brush.transform.TransformDirection(polygon.Plane.normal), Camera.current.transform.position - brush.transform.TransformPoint(polygon.GetCenterPoint())) < 0)
@@ -2690,7 +2690,7 @@ namespace Sabresaurus.SabreCSG
                 Vector3[] destVertices = newMesh.vertices;
                 Vector2[] destUV = newMesh.uv;
                 Vector3[] destNormals = newMesh.normals;
-                Color[] destColors = newMesh.colors;
+                Color32[] destColors = newMesh.colors32;
 
                 int destVertexCount = destVertices.Length;
                 int destTriangleCount = destTriangles.Length;
@@ -2719,7 +2719,7 @@ namespace Sabresaurus.SabreCSG
                 newMesh.uv = destUV;
                 newMesh.normals = destNormals;
                 newMesh.triangles = destTriangles;
-                newMesh.colors = destColors;
+                newMesh.colors32 = destColors;
 
                 // If the mesh already has tangents
                 if (csgModel.LastBuildHadTangents)
@@ -2798,7 +2798,7 @@ namespace Sabresaurus.SabreCSG
             Vector3[] sourceVertices = originalMesh.vertices;
             Vector2[] sourceUV = originalMesh.uv;
             Vector2[] sourceUV2 = originalMesh.uv2;
-            Color[] sourceColors = originalMesh.colors;
+            Color32[] sourceColors = originalMesh.colors32;
             Vector3[] sourceNormals = originalMesh.normals;
             Vector4[] sourceTangents = originalMesh.tangents;
 
@@ -2810,7 +2810,7 @@ namespace Sabresaurus.SabreCSG
             Vector3[] destVertices = newMesh.vertices;
             Vector2[] destUV = newMesh.uv;
             Vector2[] destUV2 = newMesh.uv2;
-            Color[] destColors = newMesh.colors;
+            Color32[] destColors = newMesh.colors32;
             Vector3[] destNormals = newMesh.normals;
             Vector4[] destTangents = newMesh.tangents;
 
@@ -2873,7 +2873,7 @@ namespace Sabresaurus.SabreCSG
             newMesh.vertices = destVertices;
             newMesh.uv = destUV;
             newMesh.uv2 = destUV2;
-            newMesh.colors = destColors;
+            newMesh.colors32 = destColors;
             newMesh.normals = destNormals;
             newMesh.tangents = destTangents;
             newMesh.triangles = destTriangles;
@@ -2916,8 +2916,8 @@ namespace Sabresaurus.SabreCSG
                     {
                         Undo.RecordObject(entry.BuiltMesh, "Change Vertex Color");
 
-                        Color[] meshColors = entry.BuiltMesh.colors;
-                        Color[] colors = entry.Colors;
+                        Color32[] meshColors = entry.BuiltMesh.colors32;
+                        Color32[] colors = entry.Colors;
 
                         for (int vertexIndex = 0; vertexIndex < entry.Positions.Length; vertexIndex++)
                         {
@@ -2925,7 +2925,7 @@ namespace Sabresaurus.SabreCSG
                             meshColors[entry.BuiltVertexOffset + vertexIndex] = color;
                         }
                         entry.Colors = colors;
-                        entry.BuiltMesh.colors = meshColors;
+                        entry.BuiltMesh.colors32 = meshColors;
 
                         EditorHelper.SetDirty(entry.BuiltMesh);
                     }
